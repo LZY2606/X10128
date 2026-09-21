@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>规则冲突解释器</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", sans-serif; margin: 0; background: #f5f6f8; color: #222; }
+  header { background: #1f3a5f; color: #fff; padding: 12px 20px; font-size: 20px; font-weight: 600; }
+  nav { background: #fff; border-bottom: 1px solid #ddd; padding: 0 12px; }
+  nav button { border: none; background: none; padding: 12px 16px; cursor: pointer; font-size: 15px; }
+  nav button.active { border-bottom: 3px solid #1f3a5f; font-weight: 600; }
+  main { padding: 16px 20px; }
+  .tab { display: none; } .tab.active { display: block; }
+  .card { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 14px; margin-bottom: 14px; }
+  textarea { width: 100%; font-family: ui-monospace, monospace; font-size: 12px; box-sizing: border-box; }
+  input, select { padding: 4px 6px; margin: 2px 4px 2px 0; }
+  button.act { background: #1f3a5f; color: #fff; border: none; border-radius: 4px; padding: 6px 14px; cursor: pointer; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; vertical-align: top; }
+  th { background: #f0f2f5; }
+  .ok { color: #1a7f37; } .bad { color: #c0392b; } .muted { color: #888; }
+  pre { background: #f7f7f9; padding: 8px; border-radius: 4px; overflow: auto; font-size: 12px; margin: 4px 0; }
+  details { margin-left: 12px; } summary { cursor: pointer; }
+  .node-false > summary { color: #c0392b; } .node-true > summary { color: #1a7f37; }
+  #toast { position: fixed; top: 12px; right: 12px; background: #333; color: #fff; padding: 8px 14px; border-radius: 6px; display: none; max-width: 50%; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<header>规则冲突解释器</header>
+<nav>
+  <button data-tab="versions" class="active">版本与规则</button>
+  <button data-tab="conflicts">静态冲突</button>
+  <button data-tab="run">运行解释</button>
+  <button data-tab="impact">版本影响</button>
+  <button data-tab="io">导入导出</button>
+</nav>
+<main>
+<div id="tab-versions" class="tab active">
+  <div class="card">
+    <b>版本列表</b> <button class="act" onclick="refresh()">刷新</button>
+    <button class="act" onclick="newDraft(null)">新建空白草稿</button>
+    <button class="act" onclick="newDraftFromSelected()">基于所选建草稿</button>
+    <div id="versionList"></div>
+  </div>
+  <div class="card" id="editorCard" style="display:none">
+    <b>编辑草稿 <span id="editingId"></span></b>
+    <div class="muted">规则 JSON 数组。条件类型：and/or/not/numRange/dateRange/strIn/exists/isNull/cmp。</div>
+    <textarea id="rulesJson" rows="14"></textarea>
+    <button class="act" onclick="saveRules()">保存规则</button>
+    <button class="act" onclick="publish()">发布（乐观锁）</button>
+    expectedSeq=<input id="expectedSeq" size="3">
+    <h4>并存例外</h4>
+    <div id="exList"></div>
+    <div>
+      规则A <input id="exA" size="6"> 规则B <input id="exB" size="6">
+      理由 <input id="exReason" size="20"> 失效日期 <input id="exExp" type="date">
+      <button class="act" onclick="addException()">登记例外</button>
+    </div>
+  </div>
+</div>
+<div id="tab-conflicts" class="tab">
+  <div class="card">
+    版本 <select id="confVersion"></select>
+    检查日期 <input id="confAsOf" type="date">
+    <button class="act" onclick="checkConflicts()">检查冲突</button>
+    <div id="confOut"></div>
+  </div>
+</div>
+<div id="tab-run" class="tab">
+  <div class="card">
+    版本 <select id="runVersion"></select>
+    已存事实 <select id="runFact" onchange="factSelected()"><option value="">（手工输入）</option></select>
+    运行日期 <input id="runAsOf" type="date">
+    <div>事实 JSON：<textarea id="factJson" rows="5">{"amount": 120, "tier": "gold"}</textarea></div>
+    事实名 <input id="factName" size="10">
+    <button class="act" onclick="saveFact()">保存事实</button>
+    <button class="act" onclick="runNow()">运行</button>
+  </div>
+  <div class="card" id="runOut" style="display:none"></div>
+  <div class="card"><b>历史运行（点击重放）</b><div id="runList"></div></div>
+</div>
+<div id="tab-impact" class="tab">
+  <div class="card">
+    从版本 <select id="impFrom"></select> 到版本 <select id="impTo"></select>
+    运行日期 <input id="impAsOf" type="date">
+    <button class="act" onclick="impact()">预览影响</button>
+    <div id="impOut"></div>
+  </div>
+</div>
+<div id="tab-io" class="tab">
+  <div class="card">
+    <button class="act" onclick="doExport()">导出全部（JSON）</button>
+    <h4>导入</h4>
+    <textarea id="importJson" rows="8" placeholder="粘贴导出的 JSON"></textarea>
+    <button class="act" onclick="doImport()">导入（覆盖当前数据）</button>
+  </div>
+</div>
+</main>
+<div id="toast"></div>
+<script>
+let state = null, editing = null;
+const $ = id => document.getElementById(id);
+function toast(m, bad){ const t=$('toast'); t.textContent=m; t.style.background=bad?'#c0392b':'#333'; t.style.display='block'; setTimeout(()=>t.style.display='none',4000); }
+async function api(path, method, body){
+  const r = await fetch(path, {method: method||'GET', headers:{'Content-Type':'application/json'}, body: body?JSON.stringify(body):undefined});
+  const j = await r.json();
+  if (!r.ok) { toast((j.error||'请求失败') + (j.conflicts? '\n冲突: '+j.conflicts.map(c=>c.ruleA+' vs '+c.ruleB).join(', '):''), true); throw new Error(j.error); }
+  return j;
+}
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('nav button').forEach(x=>x.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active'); $('tab-'+b.dataset.tab).classList.add('active');
+});
+async function refresh(){
+  state = await api('/api/state');
+  const vs = state.versions.slice().sort((a,b)=>(a.seq||0)-(b.seq||0)||a.id.localeCompare(b.id));
+  $('versionList').innerHTML = '<table><tr><th>版本</th><th>状态</th><th>规则数</th><th>例外数</th><th>指纹</th><th></th></tr>' +
+    vs.map(v=>`<tr><td>${v.status==='PUBLISHED'?'v'+v.seq:v.id}</td><td>${v.status}</td><td>${v.rules.length}</td><td>${v.exceptions.length}</td><td class="muted">${(v.fingerprint||'').slice(0,12)}</td><td>${v.status==='DRAFT'?`<button class="act" onclick="edit('${v.id}')">编辑</button>`:''}</td></tr>`).join('') + '</table>';
+  const pub = vs.filter(v=>v.status==='PUBLISHED');
+  const cur = pub.length? Math.max(...pub.map(v=>v.seq)) : 0;
+  $('expectedSeq').value = cur;
+  const opts = state.versions.map(v=>`<option value="${v.status==='PUBLISHED'?v.seq:v.id}">${v.status==='PUBLISHED'?'v'+v.seq:v.id}</option>`).join('');
+  ['confVersion','runVersion'].forEach(id=>$(id).innerHTML=opts);
+  const pubOpts = pub.map(v=>`<option value="${v.seq}">v${v.seq}</option>`).join('');
+  $('impFrom').innerHTML = pubOpts; $('impTo').innerHTML = pubOpts;
+  $('runFact').innerHTML = '<option value="">（手工输入）</option>' + state.facts.map(f=>`<option value="${f.id}">${f.name}</option>`).join('');
+  $('runList').innerHTML = state.runs.slice().reverse().map(r=>`<div><a href="#" onclick="replay('${r.id}');return false">${r.id}</a> v${r.versionSeq} ${r.factName||'手工'} @${r.asOf} → ${r.result.conclusion??'（无结论）'}</div>`).join('');
+}
+async function newDraft(base){ const d = await api('/api/versions','POST', base==null?{}:{baseSeq:base}); await refresh(); edit(d.id); }
+function newDraftFromSelected(){ const sel = state.versions.filter(v=>v.status==='PUBLISHED').sort((a,b)=>b.seq-a.seq)[0]; newDraft(sel?sel.seq:null); }
+async function edit(id){
+  editing = await api('/api/versions/'+id);
+  $('editorCard').style.display='block'; $('editingId').textContent = id;
+  $('rulesJson').value = JSON.stringify(editing.rules, null, 2);
+  renderExceptions();
+}
+function renderExceptions(){
+  $('exList').innerHTML = editing.exceptions.map(e=>`<div>${e.id}: ${e.ruleA} ↔ ${e.ruleB}，${e.reason}，失效于 ${e.expiresOn} <button class="act" onclick="delEx('${e.id}')">删除</button></div>`).join('') || '<span class="muted">无</span>';
+}
+async function saveRules(){
+  try { editing = await api(`/api/versions/${editing.id}/rules`,'PUT',{rules: JSON.parse($('rulesJson').value)}); toast('已保存'); refresh(); }
+  catch(e){ if(!e.message.includes('请求')) toast(e.message, true); }
+}
+async function addException(){
+  editing = await api(`/api/versions/${editing.id}/exceptions`,'POST',{ruleA:$('exA').value, ruleB:$('exB').value, reason:$('exReason').value, expiresOn:$('exExp').value});
+  renderExceptions(); toast('例外已登记');
+}
+async function delEx(id){ editing = await api(`/api/versions/${editing.id}/exceptions/${id}`,'DELETE'); renderExceptions(); }
+async function publish(){
+  try { const r = await api(`/api/versions/${editing.id}/publish`,'POST',{expectedSeq: parseInt($('expectedSeq').value)}); toast('已发布 v'+r.seq); editing=null; $('editorCard').style.display='none'; refresh(); }
+  catch(e){}
+}
+async function checkConflicts(){
+  const list = await api(`/api/versions/${$('confVersion').value}/conflicts?asOf=${$('confAsOf').value||''}`);
+  $('confOut').innerHTML = list.length ? '<table><tr><th>规则对</th><th>结论</th><th>重叠区间</th><th>最小冲突事实</th><th>例外状态</th></tr>' +
+    list.map(c=>`<tr><td>${c.ruleA} vs ${c.ruleB}</td><td>${c.conclusionA} / ${c.conclusionB}</td><td>[${c.overlapFrom}, ${c.overlapTo||'∞'}]</td><td><pre>${JSON.stringify(c.witness)}</pre>@${c.witnessAsOf}</td><td>${c.coveredByException?'<span class="ok">例外 '+c.coveredByException+' 覆盖</span>':c.expiredException?'<span class="bad">例外 '+c.expiredException+' 已过期，冲突重新暴露</span>':'<span class="bad">无例外，阻止发布</span>'}</td></tr>`).join('') + '</table>'
+    : '<span class="ok">无冲突</span>';
+}
+function factSelected(){ const f = state.facts.find(x=>x.id===$('runFact').value); if(f) $('factJson').value = JSON.stringify(f.payload, null, 2); }
+async function saveFact(){ await api('/api/facts','POST',{name:$('factName').value||'未命名', payload: JSON.parse($('factJson').value)}); toast('事实已保存'); refresh(); }
+async function runNow(){
+  const body = {version: $('runVersion').value, asOf: $('runAsOf').value||undefined};
+  if ($('runFact').value) body.factId = $('runFact').value; else body.fact = JSON.parse($('factJson').value);
+  const r = await api('/api/run','POST',body); showRun(r); refresh();
+}
+async function replay(id){ const r = await api('/api/runs/'+id); showRun(r); }
+function nodeHtml(n){
+  const kids = (n.children||[]).map(nodeHtml).join('');
+  return `<details class="node-${n.result}" open><summary>${n.result?'✓':'✗'} ${n.text}</summary>${kids}</details>`;
+}
+function showRun(r){
+  const res = r.result;
+  $('runOut').style.display='block';
+  $('runOut').innerHTML = `<b>最终结论：</b><span class="${res.conclusion!=null?'ok':'muted'}">${res.conclusion??'（无命中）'}</span>` +
+    `<br><b>胜者规则：</b>${res.winnerRuleId??'无'}` +
+    `<h4>决胜步骤</h4><ol>${res.steps.map(s=>`<li>${s}</li>`).join('')}</ol>` +
+    `<h4>命中规则</h4>${res.hitRules.join(', ')||'无'}` +
+    `<h4>被压过的规则</h4>${res.suppressed.map(s=>`<div>${s.ruleId}：${s.reason}</div>`).join('')||'无'}` +
+    `<h4>完全无关的规则</h4>${res.irrelevant.map(s=>`<div>${s.ruleId}：${s.reason}</div>`).join('')||'无'}` +
+    `<h4>解释树</h4>${Object.entries(res.explanations).map(([k,v])=>`<details><summary><b>${k}</b></summary>${nodeHtml(v)}</details>`).join('')||'无'}`;
+}
+async function impact(){
+  const list = await api(`/api/impact?from=${$('impFrom').value}&to=${$('impTo').value}&asOf=${$('impAsOf').value||''}`);
+  $('impOut').innerHTML = '<table><tr><th>事实</th><th>旧结论</th><th>新结论</th><th>变化原因</th></tr>' +
+    list.map(e=>`<tr class="${e.fromConclusion===e.toConclusion?'':'bad'}"><td>${e.factName}</td><td>${e.fromConclusion??'（无）'}</td><td>${e.toConclusion??'（无）'}</td><td>${e.cause}</td></tr>`).join('') + '</table>';
+}
+async function doExport(){
+  const j = await api('/api/export');
+  const blob = new Blob([JSON.stringify(j,null,2)],{type:'application/json'});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'rce-export.json'; a.click();
+}
+async function doImport(){ await api('/api/import','POST',JSON.parse($('importJson').value)); toast('导入完成'); refresh(); }
+refresh();
+</script>
+</body>
+</html>
