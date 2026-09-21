@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>规则冲突解释器</title>
+<style>
+  :root { --line:#d9dde3; --muted:#6b7280; --blue:#2563eb; --red:#dc2626; --green:#16a34a; --amber:#d97706; --bg:#f6f7f9; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: -apple-system,"PingFang SC","Microsoft YaHei",sans-serif; background:var(--bg); color:#111827; }
+  header { background:#111827; color:#fff; padding:14px 22px; display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; }
+  header h1 { margin:0; font-size:19px; }
+  header .sub { color:#9ca3af; font-size:12px; }
+  .layout { display:grid; grid-template-columns: 250px 1fr; min-height: calc(100vh - 52px); }
+  nav { background:#fff; border-right:1px solid var(--line); padding:12px; }
+  nav button { display:block; width:100%; text-align:left; margin-bottom:6px; padding:8px 10px; border:1px solid var(--line);
+    background:#fff; border-radius:6px; cursor:pointer; font-size:13px; }
+  nav button.active { border-color:var(--blue); background:#eff6ff; color:var(--blue); font-weight:600; }
+  main { padding:18px 22px; overflow:auto; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:8px; padding:14px 16px; margin-bottom:14px; }
+  .card h2 { margin:0 0 10px; font-size:15px; }
+  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:8px; }
+  label { font-size:12px; color:var(--muted); }
+  input,select,textarea { border:1px solid var(--line); border-radius:5px; padding:6px 8px; font-size:13px; font-family:inherit; }
+  input[type=text],input[type=number],textarea,select { min-width:120px; }
+  textarea { width:100%; font-family:ui-monospace,Menlo,monospace; }
+  button.primary { background:var(--blue); color:#fff; border:none; border-radius:6px; padding:7px 14px; cursor:pointer; font-size:13px; }
+  button.ghost { background:#fff; border:1px solid var(--line); border-radius:6px; padding:6px 12px; cursor:pointer; font-size:13px; }
+  button.danger { color:var(--red); }
+  table { border-collapse:collapse; width:100%; font-size:12.5px; }
+  th,td { border-bottom:1px solid var(--line); padding:6px 8px; text-align:left; vertical-align:top; }
+  th { color:var(--muted); font-weight:600; background:#fafbfc; }
+  .tag { display:inline-block; padding:1px 7px; border-radius:10px; font-size:11px; font-weight:600; }
+  .tag.published { background:#dcfce7; color:var(--green); }
+  .tag.draft { background:#fef3c7; color:var(--amber); }
+  .tag.win { background:#dcfce7; color:var(--green); }
+  .tag.over { background:#fee2e2; color:var(--red); }
+  .tag.co { background:#dbeafe; color:var(--blue); }
+  .tag.no { background:#f3f4f6; color:var(--muted); }
+  .muted { color:var(--muted); font-size:12px; }
+  .tree { font-size:12.5px; margin:0; padding-left:16px; }
+  .tree li { list-style:none; margin:2px 0; }
+  .tree li::before { content:"▸ "; color:#9ca3af; }
+  .t-true { color:var(--green); } .t-false { color:var(--red); } .t-unknown { color:var(--amber); }
+  .step { border-left:3px solid var(--blue); background:#f8fafc; padding:6px 10px; margin:6px 0; font-size:12.5px; border-radius:0 6px 6px 0; }
+  .banner { padding:8px 12px; border-radius:6px; font-size:13px; margin-bottom:10px; }
+  .banner.err { background:#fef2f2; border:1px solid #fecaca; color:var(--red); }
+  .banner.ok { background:#f0fdf4; border:1px solid #bbf7d0; color:var(--green); }
+  .banner.warn { background:#fffbeb; border:1px solid #fde68a; color:var(--amber); }
+  details { margin:4px 0; } summary { cursor:pointer; font-size:12.5px; font-weight:600; }
+  code { background:#f3f4f6; padding:0 4px; border-radius:3px; font-size:12px; }
+  .cond-editor { border:1px dashed var(--line); padding:8px; border-radius:6px; margin:6px 0; background:#fcfcfd; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  .mono { font-family:ui-monospace,Menlo,monospace; font-size:12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>规则冲突解释器</h1>
+  <span class="sub">为什么这个对象最后得到这个结论 · 本地规则引擎</span>
+  <span id="clock" class="sub" style="margin-left:auto"></span>
+</header>
+<div class="layout">
+  <nav id="nav"></nav>
+  <main id="main"></main>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>
